@@ -1,9 +1,6 @@
 #![windows_subsystem = "windows"]
 
-use std::{
-    ffi::{c_char, c_void, CStr},
-    ptr,
-};
+use std::ffi::{c_char, c_void, CStr};
 
 use windows::{
     core::{ComInterface, IUnknown, Interface, Result, PCSTR},
@@ -34,12 +31,7 @@ use windows::{
 };
 
 fn main() -> Result<()> {
-    unsafe {
-        CoInitializeEx(
-            Some(ptr::null()),
-            COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE,
-        )
-    }?;
+    unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) }?;
 
     let locations = get_explorer_locations()?;
     kill_process_by_name("explorer.exe");
