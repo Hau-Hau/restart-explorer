@@ -3,8 +3,8 @@
 use std::ffi::{c_char, c_void, CStr};
 
 use windows::{
-    core::{ComInterface, IUnknown, Interface, Result, PCSTR},
-    s,
+    core::{ComInterface, IUnknown, Interface, Result, PCWSTR},
+    w,
     Win32::{
         Foundation::{CloseHandle, BOOL, HWND, S_FALSE},
         System::{
@@ -22,7 +22,7 @@ use windows::{
         UI::{
             Shell::{
                 IPersistIDList, IShellBrowser, IShellItem, IShellWindows, IUnknown_QueryService,
-                SHCreateItemFromIDList, SID_STopLevelBrowser, ShellExecuteA, ShellWindows,
+                SHCreateItemFromIDList, SID_STopLevelBrowser, ShellExecuteW, ShellWindows,
                 SIGDN_DESKTOPABSOLUTEPARSING,
             },
             WindowsAndMessaging::{SW_NORMAL, SW_SHOWMINIMIZED},
@@ -44,10 +44,16 @@ fn main() -> Result<()> {
 
 fn open_location(location: &str) {
     unsafe {
-        ShellExecuteA(
+        ShellExecuteW(
             None,
-            s!("open"),
-            PCSTR::from_raw(format!("{}\0", location).as_mut_ptr()),
+            w!("open"),
+            PCWSTR(
+                location
+                    .encode_utf16()
+                    .chain([0u16])
+                    .collect::<Vec<u16>>()
+                    .as_mut_ptr(),
+            ),
             None,
             None,
             SW_SHOWMINIMIZED,
@@ -57,10 +63,16 @@ fn open_location(location: &str) {
 
 fn start_process(process_name: &str) {
     unsafe {
-        ShellExecuteA(
+        ShellExecuteW(
             None,
             None,
-            PCSTR::from_raw(format!("{}\0", process_name).as_mut_ptr()),
+            PCWSTR(
+                process_name
+                    .encode_utf16()
+                    .chain([0u16])
+                    .collect::<Vec<u16>>()
+                    .as_mut_ptr(),
+            ),
             None,
             None,
             SW_NORMAL,
