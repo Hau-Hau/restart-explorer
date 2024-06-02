@@ -1,33 +1,34 @@
 use std::{
-    ffi::{c_char, c_void, CStr},
-    process::Command,
-    ptr::{self},
+    borrow::{Borrow, BorrowMut},
+    ffi::{c_void, CString, OsStr, OsString},
+    fmt::Debug,
+    mem::MaybeUninit,
+    os::windows::ffi::OsStringExt,
+    process,
+    ptr::{self, addr_of_mut},
 };
 
 use windows::{
-    core::{ComInterface, IUnknown, Interface, Result, PCSTR},
-    s,
+    core::{Error, IUnknown, Interface, Param, Result, PROPVARIANT, VARIANT},
     Win32::{
-        Foundation::{CloseHandle, BOOL, HWND, S_FALSE},
+        Foundation::{CloseHandle, HANDLE, HWND, S_FALSE, VARIANT_BOOL},
         System::{
             Com::{
                 CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_LOCAL_SERVER,
-                COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, VARIANT, VT_DISPATCH,
+                COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
             },
             Diagnostics::ToolHelp::{
-                CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32,
-                TH32CS_SNAPALL,
+                CreateToolhelp32Snapshot, Process32First, Process32Next,
+                CREATE_TOOLHELP_SNAPSHOT_FLAGS, PROCESSENTRY32, TH32CS_SNAPALL,
             },
-            Ole::IEnumVARIANT,
+            Ole::{IEnumVARIANT, SAFEARR_VARIANT},
             Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE},
+            Variant::VT_DISPATCH,
         },
-        UI::{
-            Shell::{
-                IPersistIDList, IShellBrowser, IShellItem, IShellWindows, IUnknown_QueryService,
-                SHCreateItemFromIDList, SID_STopLevelBrowser, ShellExecuteA, ShellWindows,
-                SIGDN_DESKTOPABSOLUTEPARSING,
-            },
-            WindowsAndMessaging::SW_SHOWMINIMIZED,
+        UI::Shell::{
+            IPersistIDList, IShellBrowser, IShellItem, IShellWindows, IUnknown_QueryService,
+            SHCreateItemFromIDList, SID_STopLevelBrowser, ShellWindows,
+            SIGDN_DESKTOPABSOLUTEPARSING,
         },
     },
 };
@@ -35,90 +36,16 @@ use windows::{
 fn main() -> Result<()> {
     unsafe {
         CoInitializeEx(
-            Some(ptr::null()),
+            Option::Some(ptr::null()),
             COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE,
         )
-    }?;
+    };
 
     let windows: IShellWindows =
         unsafe { CoCreateInstance(&ShellWindows, None, CLSCTX_LOCAL_SERVER) }?;
     let locations = get_explorer_locations(&windows)?;
-    kill_process_by_name("explorer.exe");
-    start_process("explorer.exe");
-    for location in locations {
-        open_location(&location);
-    }
     Ok(())
 }
-
-fn open_location(location: &str) {
-    unsafe {
-        ShellExecuteA(
-            None,
-            s!("open"),
-            PCSTR::from_raw(format!("{}\0", location).as_mut_ptr()),
-            None,
-            None,
-            SW_SHOWMINIMIZED,
-        )
-        // ShellExecuteW(
-        //     None,
-        //     None,
-        //     w!("explorer.exe"),
-        //     PCWSTR(
-        //         location
-        //             .encode_utf16()
-        //             .chain([0u16])
-        //             .collect::<Vec<u16>>()
-        //             .as_mut_ptr(),
-        //     ),
-        //     None,
-        //     SW_SHOWMINIMIZED,
-        // )
-    };
-}
-
-fn start_process(process_name: &str) {
-    let mut process = Command::new(process_name);
-    process.spawn().unwrap();
-    drop(process);
-}
-
-fn kill_process_by_name(process_name: &str) {
-    let snapshot =
-        unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPALL, 0).expect("Failed to create snapshot") };
-    let mut entry = PROCESSENTRY32 {
-        dwSize: std::mem::size_of::<PROCESSENTRY32>() as u32,
-        ..Default::default()
-    };
-    let mut has_next_process = bool::from(unsafe { Process32First(snapshot, &mut entry) });
-    while has_next_process {
-        let current_process_name = unsafe {
-            CStr::from_ptr(entry.szExeFile.as_ptr() as *const c_char)
-                .to_str()
-                .unwrap()
-        };
-        if current_process_name == process_name {
-            kill_process(entry.th32ProcessID);
-        }
-
-        has_next_process = bool::from(unsafe { Process32Next(snapshot, &mut entry) });
-    }
-
-    unsafe { CloseHandle(snapshot) };
-}
-
-pub fn kill_process(process_id: u32) {
-    unsafe {
-        let process_handle = OpenProcess(PROCESS_TERMINATE, BOOL::from(false), process_id);
-        if let Ok(process) = process_handle {
-            TerminateProcess(process, 1);
-            CloseHandle(process);
-        }
-    }
-}
-
-// Below code is based on https://stackoverflow.com/questions/73311644/get-path-to-selected-files-in-active-explorer-window
 
 fn get_explorer_locations(windows: &IShellWindows) -> Result<Vec<String>> {
     let unk_enum = unsafe { windows._NewEnum() }?;
@@ -127,30 +54,57 @@ fn get_explorer_locations(windows: &IShellWindows) -> Result<Vec<String>> {
     let mut locations = vec![];
     loop {
         let mut fetched = 0;
-        let mut var: [VARIANT; 1] = [VARIANT::default(); 1];
+        let mut var = [VARIANT::default(); 1];
         let hr = unsafe { enum_variant.Next(&mut var, &mut fetched) };
+        // No more windows?
         if hr == S_FALSE || fetched == 0 {
             break;
         }
-        if unsafe { var[0].Anonymous.Anonymous.vt } != VT_DISPATCH as _ {
+
+        // Not an IDispatch interface?
+        if unsafe { var[0].clone().as_raw().Anonymous.Anonymous.vt } != VT_DISPATCH.0 as _ {
             continue;
         }
 
+        // let y = unsafe {
+        //     std::mem::transmute::<*mut std::ffi::c_void, IUnknown>(
+        //         var[0]
+        //             .clone()
+        //             .as_raw()
+        //             .Anonymous
+        //             .Anonymous
+        //             .Anonymous
+        //             .pdispVal,
+        //     )
+        // };
+        // let x = unsafe {
+        //     IUnknown::from_raw(
+        //         var[0]
+        //             .clone()
+        //             .as_raw()
+        //             .Anonymous
+        //             .Anonymous
+        //             .Anonymous
+        //             .pdispVal,
+        //     )
+        // };
+
+        // Get the information
         let mut hwnd = Default::default();
         let location = get_browser_info(
             unsafe {
                 var[0]
+                    .clone()
+                    .as_raw()
                     .Anonymous
                     .Anonymous
                     .Anonymous
                     .pdispVal
-                    .as_ref()
-                    .unwrap()
-                    .as_raw()
             },
             &mut hwnd,
         )?;
 
+        // Convert UTF-16 to UTF-8 for display
         let location = String::from_utf16_lossy(&location);
         locations.push(location);
     }
@@ -158,11 +112,24 @@ fn get_explorer_locations(windows: &IShellWindows) -> Result<Vec<String>> {
     Ok(locations)
 }
 
-fn get_browser_info(unk: *mut c_void, hwnd: &mut HWND) -> Result<Vec<u16>> {
-    let shell_browser: IShellBrowser =
-        unsafe { IUnknown_QueryService(&IUnknown::from_raw(unk), &SID_STopLevelBrowser) }?;
-    *hwnd = unsafe { shell_browser.GetWindow() }?;
+// fn get_browser_info(unk: *mut c_void) -> Result<Vec<u16>> {
+//     let shell_browser: IShellBrowser =
+//         unsafe { IUnknown_QueryService(&IUnknown::from_raw(unk), &SID_STopLevelBrowser) }?;
+//     // *hwnd = unsafe { shell_browser.GetWindow() }?;
 
+//     let output = get_location_from_view(&shell_browser);
+//     unsafe { CoTaskMemFree(Option::Some(unk)) };
+//     output
+// }
+
+fn get_browser_info(unk: *mut c_void, hwnd: &mut HWND) -> Result<Vec<u16>> {
+    let shell_browser: IShellBrowser = unsafe {
+        IUnknown_QueryService(
+            &std::mem::transmute::<*mut std::ffi::c_void, IUnknown>(unk),
+            &SID_STopLevelBrowser,
+        )
+    }?;
+    *hwnd = unsafe { shell_browser.GetWindow() }?;
     get_location_from_view(&shell_browser)
 }
 
@@ -174,6 +141,7 @@ fn get_location_from_view(browser: &IShellBrowser) -> Result<Vec<u16>> {
     let item = unsafe { SHCreateItemFromIDList::<IShellItem>(id_list) }?;
     let ptr = unsafe { item.GetDisplayName(SIGDN_DESKTOPABSOLUTEPARSING) }?;
 
+    // Copy UTF-16 string to `Vec<u16>` (including NUL terminator)
     let mut path = Vec::new();
     let mut p = ptr.0 as *const u16;
     loop {
@@ -185,8 +153,9 @@ fn get_location_from_view(browser: &IShellBrowser) -> Result<Vec<u16>> {
         p = unsafe { p.add(1) };
     }
 
-    unsafe { CoTaskMemFree(Some(ptr.0 as _)) };
-    unsafe { CoTaskMemFree(Some(id_list as _)) };
+    // Cleanup
+    unsafe { CoTaskMemFree(Option::Some(ptr.0 as _)) };
+    unsafe { CoTaskMemFree(Option::Some(id_list as _)) };
 
     Ok(path)
 }
