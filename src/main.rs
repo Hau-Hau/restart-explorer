@@ -1,7 +1,8 @@
+#![windows_subsystem = "windows"]
+
 use std::{
     ffi::{c_char, c_void, CStr},
-    process::Command,
-    ptr::{self},
+    ptr,
 };
 
 use windows::{
@@ -27,7 +28,7 @@ use windows::{
                 SHCreateItemFromIDList, SID_STopLevelBrowser, ShellExecuteA, ShellWindows,
                 SIGDN_DESKTOPABSOLUTEPARSING,
             },
-            WindowsAndMessaging::SW_SHOWMINIMIZED,
+            WindowsAndMessaging::{SW_NORMAL, SW_SHOWMINIMIZED},
         },
     },
 };
@@ -40,9 +41,7 @@ fn main() -> Result<()> {
         )
     }?;
 
-    let windows: IShellWindows =
-        unsafe { CoCreateInstance(&ShellWindows, None, CLSCTX_LOCAL_SERVER) }?;
-    let locations = get_explorer_locations(&windows)?;
+    let locations = get_explorer_locations()?;
     kill_process_by_name("explorer.exe");
     start_process("explorer.exe");
     for location in locations {
@@ -61,27 +60,20 @@ fn open_location(location: &str) {
             None,
             SW_SHOWMINIMIZED,
         )
-        // ShellExecuteW(
-        //     None,
-        //     None,
-        //     w!("explorer.exe"),
-        //     PCWSTR(
-        //         location
-        //             .encode_utf16()
-        //             .chain([0u16])
-        //             .collect::<Vec<u16>>()
-        //             .as_mut_ptr(),
-        //     ),
-        //     None,
-        //     SW_SHOWMINIMIZED,
-        // )
     };
 }
 
 fn start_process(process_name: &str) {
-    let mut process = Command::new(process_name);
-    process.spawn().unwrap();
-    drop(process);
+    unsafe {
+        ShellExecuteA(
+            None,
+            None,
+            PCSTR::from_raw(format!("{}\0", process_name).as_mut_ptr()),
+            None,
+            None,
+            SW_NORMAL,
+        )
+    };
 }
 
 fn kill_process_by_name(process_name: &str) {
@@ -120,7 +112,9 @@ pub fn kill_process(process_id: u32) {
 
 // Below code is based on https://stackoverflow.com/questions/73311644/get-path-to-selected-files-in-active-explorer-window
 
-fn get_explorer_locations(windows: &IShellWindows) -> Result<Vec<String>> {
+fn get_explorer_locations() -> Result<Vec<String>> {
+    let windows: IShellWindows =
+        unsafe { CoCreateInstance(&ShellWindows, None, CLSCTX_LOCAL_SERVER) }?;
     let unk_enum = unsafe { windows._NewEnum() }?;
     let enum_variant = unk_enum.cast::<IEnumVARIANT>()?;
 
