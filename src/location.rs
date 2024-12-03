@@ -56,7 +56,6 @@ fn get_topmost_window(hwnd: &HWND) -> HWND {
             Ok(x) => topmost_hwnd = x,
             Err(_) => break,
         }
-        topmost_hwnd = handle.unwrap();
     }
     topmost_hwnd
 }
