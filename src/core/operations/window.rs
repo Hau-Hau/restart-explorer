@@ -7,19 +7,14 @@ use windows::{
     core::{IUnknown, Interface, VARIANT},
     Win32::{
         Foundation::{ERROR_TIMEOUT, HWND, S_FALSE, WIN32_ERROR},
-        System::{
-            Com::{CoCreateInstance, CLSCTX_LOCAL_SERVER},
-            Ole::IEnumVARIANT,
-            Variant::VT_DISPATCH,
-        },
-        UI::{
-            Shell::{IShellBrowser, IShellWindows, ShellWindows},
-            WindowsAndMessaging::GW_HWNDNEXT,
-        },
+        System::Variant::VT_DISPATCH,
+        UI::{Shell::IShellBrowser, WindowsAndMessaging::GW_HWNDNEXT},
     },
 };
 
-use crate::infrastructure::windows_os::windows_api::WindowApi;
+use crate::infrastructure::windows_os::{
+    enum_variant::EnumVariant, shell_windows::ShellWindows, windows_api::WindowApi,
+};
 
 use super::shell_view::get_path_from_shell_view;
 
@@ -48,14 +43,12 @@ pub fn wait_for_window_stable<TWindowApi: WindowApi>(
             return Err(windows::core::Error::from(WIN32_ERROR(ERROR_TIMEOUT.0)));
         }
 
-        let windows: IShellWindows =
-            unsafe { CoCreateInstance(&ShellWindows, None, CLSCTX_LOCAL_SERVER) }?;
-        let unk_enum = unsafe { windows._NewEnum() }?;
-        let enum_variant = unk_enum.cast::<IEnumVARIANT>()?;
+        let shell_windows = window_api.create_shell_windows()?;
+        let enum_variant = shell_windows.new_enum_variant()?;
         loop {
             let mut fetched = 0;
             let mut var = [VARIANT::default(); 1];
-            let hr = unsafe { enum_variant.Next(&mut var, &mut fetched) };
+            let hr = enum_variant.next(&mut var, &mut fetched);
             if hr == S_FALSE || fetched == 0 {
                 std::thread::sleep(Duration::from_millis(100));
                 break;
