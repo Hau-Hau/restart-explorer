@@ -8,7 +8,10 @@ use windows::{
     Win32::{
         Foundation::{ERROR_TIMEOUT, HWND, S_FALSE, WIN32_ERROR},
         System::Variant::VT_DISPATCH,
-        UI::{Shell::IShellBrowser, WindowsAndMessaging::GW_HWNDNEXT},
+        UI::{
+            Shell::IShellBrowser,
+            WindowsAndMessaging::{FlashWindowEx, FLASHWINFO, FLASHW_STOP, GW_HWNDNEXT},
+        },
     },
 };
 
@@ -33,9 +36,9 @@ pub fn get_topmost_window<TWindowApi: WindowApi>(hwnd: &HWND, window_api: &TWind
 pub fn wait_for_window_stable<TWindowApi: WindowApi>(
     location: &str,
     timeout: Duration,
-    already_open_explorer_windows: &[isize],
+    already_open_explorer_windows: &[usize],
     window_api: &TWindowApi,
-) -> Result<isize, windows::core::Error> {
+) -> Result<usize, windows::core::Error> {
     let start = Instant::now();
     let mut id = 0;
     while id == 0 {
@@ -85,7 +88,7 @@ pub fn wait_for_window_stable<TWindowApi: WindowApi>(
             let hwnd = unsafe { shell_view.GetWindow()? };
             let topmost_parent = get_topmost_window(&hwnd, window_api);
 
-            let temp_id = topmost_parent.0 as isize;
+            let temp_id = topmost_parent.0 as usize;
             if already_open_explorer_windows.contains(&temp_id) {
                 std::thread::sleep(Duration::from_millis(100));
                 continue;
@@ -117,4 +120,17 @@ pub fn get_window_z_index<TWindowApi: WindowApi>(
     }
 
     Ok(z_index)
+}
+
+pub fn stop_window_flashing(hwnd: HWND) {
+    unsafe {
+        let flash_info = FLASHWINFO {
+            cbSize: std::mem::size_of::<FLASHWINFO>() as u32,
+            hwnd,
+            dwFlags: FLASHW_STOP,
+            uCount: 0,
+            dwTimeout: 0,
+        };
+        let _ = FlashWindowEx(&flash_info);
+    }
 }
