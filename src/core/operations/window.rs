@@ -1,15 +1,20 @@
 use std::{
     ptr::null_mut,
+    sync::{Arc, Mutex},
+    thread,
     time::{Duration, Instant},
 };
 
 use windows::{
-    core::{IUnknown, Interface, VARIANT},
     Win32::{
         Foundation::{ERROR_TIMEOUT, HWND, S_FALSE, WIN32_ERROR},
         System::Variant::VT_DISPATCH,
-        UI::{Shell::IShellBrowser, WindowsAndMessaging::GW_HWNDNEXT},
+        UI::{
+            Shell::IShellBrowser,
+            WindowsAndMessaging::{FLASHW_STOP, FLASHWINFO, FlashWindowEx, GW_HWNDNEXT},
+        },
     },
+    core::{IUnknown, Interface, VARIANT},
 };
 
 use crate::infrastructure::windows_os::{
@@ -33,7 +38,7 @@ pub fn get_topmost_window<TWindowApi: WindowApi>(hwnd: &HWND, window_api: &TWind
 pub fn wait_for_window_stable<TWindowApi: WindowApi>(
     location: &str,
     timeout: Duration,
-    already_open_explorer_windows: &[isize],
+    already_open_explorer_windows: &Arc<Mutex<Vec<isize>>>,
     window_api: &TWindowApi,
 ) -> Result<isize, windows::core::Error> {
     let start = Instant::now();
@@ -50,12 +55,12 @@ pub fn wait_for_window_stable<TWindowApi: WindowApi>(
             let mut var = [VARIANT::default(); 1];
             let hr = enum_variant.next(&mut var, &mut fetched);
             if hr == S_FALSE || fetched == 0 {
-                std::thread::sleep(Duration::from_millis(100));
+                thread::sleep(Duration::from_millis(100));
                 break;
             }
 
             if unsafe { var[0].as_raw().Anonymous.Anonymous.vt } != VT_DISPATCH.0 {
-                std::thread::sleep(Duration::from_millis(100));
+                thread::sleep(Duration::from_millis(100));
                 continue;
             }
 
@@ -72,13 +77,13 @@ pub fn wait_for_window_stable<TWindowApi: WindowApi>(
             let path = match get_path_from_shell_view(&shell_view) {
                 Ok(path) => path,
                 Err(_) => {
-                    std::thread::sleep(Duration::from_millis(100));
+                    thread::sleep(Duration::from_millis(100));
                     continue;
                 }
             };
 
             if path != location {
-                std::thread::sleep(Duration::from_millis(100));
+                thread::sleep(Duration::from_millis(100));
                 continue;
             }
 
@@ -86,8 +91,14 @@ pub fn wait_for_window_stable<TWindowApi: WindowApi>(
             let topmost_parent = get_topmost_window(&hwnd, window_api);
 
             let temp_id = topmost_parent.0 as isize;
-            if already_open_explorer_windows.contains(&temp_id) {
-                std::thread::sleep(Duration::from_millis(100));
+
+            let already_open_ids = {
+                let guard = already_open_explorer_windows.lock().unwrap();
+                guard.clone() // Make a temporary copy to check against
+            };
+
+            if already_open_ids.contains(&temp_id) {
+                thread::sleep(Duration::from_millis(100));
                 continue;
             }
 
@@ -117,4 +128,17 @@ pub fn get_window_z_index<TWindowApi: WindowApi>(
     }
 
     Ok(z_index)
+}
+
+pub fn stop_window_flashing(hwnd: HWND) {
+    unsafe {
+        let flash_info = FLASHWINFO {
+            cbSize: std::mem::size_of::<FLASHWINFO>() as u32,
+            hwnd,
+            dwFlags: FLASHW_STOP,
+            uCount: 0,
+            dwTimeout: 0,
+        };
+        let _ = FlashWindowEx(&flash_info);
+    }
 }

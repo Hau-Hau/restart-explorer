@@ -1,22 +1,26 @@
-use std::{ffi::c_void, time::Duration};
+use std::{
+    ffi::c_void,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use windows::{
-    core::{w, IUnknown, Interface, PCWSTR, VARIANT},
     Win32::{
         Foundation::{RECT, S_FALSE},
         System::{
-            Com::{CoCreateInstance, CLSCTX_LOCAL_SERVER},
+            Com::{CLSCTX_LOCAL_SERVER, CoCreateInstance},
             Ole::IEnumVARIANT,
             Variant::VT_DISPATCH,
         },
         UI::{
             Shell::{IShellBrowser, IShellWindows, ShellExecuteW, ShellWindows},
             WindowsAndMessaging::{
-                GetWindowRect, IsIconic, SetWindowPos, ShowWindow, SWP_SHOWWINDOW, SW_MINIMIZE,
-                SW_RESTORE, SW_SHOW,
+                GetWindowRect, IsIconic, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SWP_SHOWWINDOW,
+                SetWindowPos, ShowWindow,
             },
         },
     },
+    core::{IUnknown, Interface, PCWSTR, VARIANT, w},
 };
 
 use crate::{data::window::Window, infrastructure::windows_os::windows_api::WindowApi};
@@ -28,7 +32,7 @@ use super::{
 
 pub fn open_location<TWindowApi: WindowApi>(
     window: &Window,
-    already_open_explorer_windows: &[isize],
+    already_open_explorer_windows: &Arc<Mutex<Vec<isize>>>,
     window_api: &TWindowApi,
 ) -> Option<isize> {
     let location_utf16: Vec<u16> = window
@@ -54,6 +58,12 @@ pub fn open_location<TWindowApi: WindowApi>(
         window_api,
     ) {
         let _ = adjust_window_position(&window, id, window_api);
+
+        // Update the mutex with the new window ID
+        if let Ok(mut guard) = already_open_explorer_windows.lock() {
+            guard.push(id);
+        }
+
         return Some(id);
     }
 
