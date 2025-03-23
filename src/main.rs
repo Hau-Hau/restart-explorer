@@ -24,7 +24,7 @@ fn main() {
     kill_process_by_name("explorer.exe");
     start_process("explorer.exe");
 
-    let mut already_open_explorer_windows: Vec<isize> = vec![];
+    let mut already_open_explorer_windows: Vec<usize> = vec![];
     if let Ok(_) = wait_for_explorer_stable(Duration::from_secs(10)) {
         for window in windows {
             if let Some(id) = open_location(&window, &already_open_explorer_windows, &window_api) {

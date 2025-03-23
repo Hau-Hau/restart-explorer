@@ -3,7 +3,7 @@ use std::{ffi::c_void, time::Duration};
 use windows::{
     core::{w, IUnknown, Interface, PCWSTR, VARIANT},
     Win32::{
-        Foundation::{RECT, S_FALSE},
+        Foundation::{HWND, RECT, S_FALSE},
         System::{
             Com::{CoCreateInstance, CLSCTX_LOCAL_SERVER},
             Ole::IEnumVARIANT,
@@ -23,14 +23,16 @@ use crate::{data::window::Window, infrastructure::windows_os::windows_api::Windo
 
 use super::{
     shell_view::get_path_from_shell_view,
-    window::{get_topmost_window, get_window_z_index, wait_for_window_stable},
+    window::{
+        get_topmost_window, get_window_z_index, stop_window_flashing, wait_for_window_stable,
+    },
 };
 
 pub fn open_location<TWindowApi: WindowApi>(
     window: &Window,
-    already_open_explorer_windows: &[isize],
+    already_open_explorer_windows: &[usize],
     window_api: &TWindowApi,
-) -> Option<isize> {
+) -> Option<usize> {
     let location_utf16: Vec<u16> = window
         .location
         .encode_utf16()
@@ -54,6 +56,7 @@ pub fn open_location<TWindowApi: WindowApi>(
         window_api,
     ) {
         let _ = adjust_window_position(&window, id, window_api);
+        stop_window_flashing(get_topmost_window(&HWND(id as *mut c_void), window_api));
         return Some(id);
     }
 
@@ -62,7 +65,7 @@ pub fn open_location<TWindowApi: WindowApi>(
 
 fn adjust_window_position<TWindowApi: WindowApi>(
     window: &Window,
-    id: isize,
+    id: usize,
     window_api: &TWindowApi,
 ) -> Result<(), windows::core::Error> {
     let windows: IShellWindows =
@@ -103,7 +106,7 @@ fn adjust_window_position<TWindowApi: WindowApi>(
 fn try_set_position<TWindowApi: WindowApi>(
     unk: *mut c_void,
     window: &Window,
-    id: isize,
+    id: usize,
     window_api: &TWindowApi,
 ) -> Result<bool, windows::core::Error> {
     let browser: IShellBrowser = unsafe {
@@ -122,7 +125,7 @@ fn try_set_position<TWindowApi: WindowApi>(
     let hwnd = unsafe { shell_view.GetWindow()? };
     let topmost_parent = get_topmost_window(&hwnd, window_api);
 
-    if (topmost_parent.0 as isize) != id {
+    if (topmost_parent.0 as usize) != id {
         return Ok(false);
     }
 
@@ -226,6 +229,8 @@ fn get_window_from_view<TWindowApi: WindowApi>(
     unsafe {
         let _ = GetWindowRect(topmost_parent, &mut rect);
     }
+
+    stop_window_flashing(topmost_parent);
 
     Ok(Window {
         location: path,
